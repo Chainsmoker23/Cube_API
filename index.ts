@@ -1,16 +1,18 @@
 // --- CONFIGURATION ---
 // This MUST be the first code to run to ensure all environment variables are loaded.
 import dotenv from 'dotenv';
-import path from 'path';
 
-// Load environment variables from the root .env file.
-const envPath = path.resolve(__dirname, './.env');
-const result = dotenv.config({ path: envPath });
+
+// Load environment variables from the root .env file by default.
+// This is more robust as it relies on the standard behavior of running the script
+// from the project's root directory.
+const result = dotenv.config();
 
 if (result.error) {
-  console.error(`[Startup Error] Could not load .env file from path: ${envPath}`);
+  console.error(`[Startup Error] Could not load .env file. Ensure it exists in the project root.`);
   throw result.error;
 }
+console.log('[Startup] .env file loaded successfully.');
 
 // Validate that all required variables are present.
 const requiredEnvVars = [
@@ -19,7 +21,10 @@ const requiredEnvVars = [
   'DODO_SECRET_KEY',
   'SITE_URL',
   'DODO_WEBHOOK_SECRET',
-  'GEMINI_API_KEY', // UPDATED: Check for backend-specific key
+  'VITE_API_KEY',
+  'ADMIN_EMAIL',
+  'ADMIN_PASSWORD',
+  'JWT_SECRET',
 ];
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
 if (missingVars.length > 0) {
@@ -27,6 +32,12 @@ if (missingVars.length > 0) {
   console.error(`[Startup Error] Please ensure they are set in the .env file at the project root.`);
   process.exit(1);
 }
+console.log('[Startup] All required environment variables are present.');
+
+// --- Dodo Payments Key Logging ---
+// Log the presence of Dodo keys to help with debugging setup issues.
+console.log(`[Startup] DODO_SECRET_KEY loaded: ${process.env.DODO_SECRET_KEY ? 'Yes' : 'No'}`);
+console.log(`[Startup] DODO_WEBHOOK_SECRET loaded: ${process.env.DODO_WEBHOOK_SECRET ? 'Yes' : 'No'}`);
 // --- END CONFIGURATION ---
 
 
@@ -66,9 +77,9 @@ const corsOptions: cors.CorsOptions = {
 // Apply CORS middleware to all incoming requests.
 app.use(cors(corsOptions));
 
-// This middleware is for parsing JSON bodies. It's good practice to have it globally.
-app.use(express.json());
-
+// The global express.json() middleware has been removed from here.
+// It is now applied selectively to routes in `routes.ts` to allow
+// the webhook route to receive the raw request body for signature verification.
 
 // --- API Routes ---
 // Mount all API routes under the /api prefix.

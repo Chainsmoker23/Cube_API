@@ -1,5 +1,6 @@
 import * as express from 'express';
 import { GoogleGenAI } from "@google/genai";
+import { getCachedConfig } from './adminController';
 
 const handleError = (res: express.Response, error: unknown, defaultMessage: string = 'An unexpected error occurred.') => {
     const errorMessage = error instanceof Error ? error.message : defaultMessage;
@@ -15,9 +16,10 @@ const handleError = (res: express.Response, error: unknown, defaultMessage: stri
 
 export const handleChatWithAssistant = async (req: express.Request, res: express.Response) => {
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
+        const config = await getCachedConfig();
+        const apiKey = config.gemini_api_key;
         if (!apiKey) {
-            return res.status(500).json({ error: 'Assistant is currently unavailable.' });
+            return res.status(500).json({ error: 'Assistant is currently unavailable (API key not configured).' });
         }
         
         const { history } = req.body;
