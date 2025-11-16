@@ -83,9 +83,11 @@ const port = 3000;
 // Configure CORS to allow requests from your local frontend development server.
 // In a production environment, you would also add your deployed frontend's URL.
 const allowedOrigins = [
-    'http://localhost:5173', // Default Vite dev server
-    'http://localhost:5174', // Alternative Vite dev server
-    'http://localhost:3000', // Common CRA dev server
+    'http://localhost:5173', 
+    'http://localhost:5174',
+    'http://localhost:3000',
+    'https://cubegenai.com',
+    'https://www.cubegenai.com'
 ];
 
 const corsOptions: cors.CorsOptions = {
