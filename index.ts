@@ -76,7 +76,7 @@ import cors from 'cors';
 import apiRoutes from './routes'; // Import the centralized routes
 
 const app = express();
-const port = 3001;
+const port = 3000;
 
 // --- Global Middleware ---
 
