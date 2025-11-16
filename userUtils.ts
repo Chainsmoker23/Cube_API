@@ -2,7 +2,7 @@ import * as express from 'express';
 import { User } from '@supabase/supabase-js';
 import { supabaseAdmin } from './supabaseClient';
 
-export const FREE_GENERATION_LIMIT = 30;
+export const FREE_GENERATION_LIMIT = 10;
 export const HOBBYIST_GENERATION_LIMIT = 50;
 
 /**
@@ -35,11 +35,11 @@ export const authenticateUser = async (req: express.Request): Promise<User | nul
  * @param user The authenticated Supabase User object.
  * @returns An object indicating if the generation is allowed and the user's current count.
  */
-export const canUserGenerate = async (user: User): Promise<{ allowed: boolean; error?: string, generationCount: number }> => {
+export const canUserGenerate = async (user: User): Promise<{ allowed: boolean; error?: string, generationBalance: number }> => {
     // 1. Check for an active subscription in the new `subscriptions` table. This is the highest priority.
     const { data: activeSubscription, error: subError } = await supabaseAdmin
         .from('subscriptions')
-        .select('id, status')
+        .select('id, plan_name')
         .eq('user_id', user.id)
         .eq('status', 'active')
         .maybeSingle();
@@ -49,12 +49,12 @@ export const canUserGenerate = async (user: User): Promise<{ allowed: boolean; e
         throw new Error('Could not verify user subscription status.');
     }
     
-    // If an active subscription exists, they have unlimited generations.
-    if (activeSubscription) {
-        return { allowed: true, generationCount: user.user_metadata?.generation_count || 0 };
+    // If an active subscription is 'pro', they have unlimited generations.
+    if (activeSubscription && activeSubscription.plan_name === 'pro') {
+        return { allowed: true, generationBalance: Infinity };
     }
 
-    // 2. If no active subscription, fall back to checking free/hobbyist generation counts.
+    // 2. If not a pro sub, fall back to checking free/hobbyist generation balance.
     // This requires fetching the latest user data to prevent stale metadata issues.
     const { data: { user: freshUser }, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(user.id);
     if (fetchError || !freshUser) {
@@ -63,62 +63,57 @@ export const canUserGenerate = async (user: User): Promise<{ allowed: boolean; e
     }
 
     const plan = freshUser.user_metadata?.plan || 'free';
-    const generationCount = freshUser.user_metadata?.generation_count || 0;
     
-    // "Pro" should have been caught by the subscription check, but as a safeguard:
-    if (plan === 'pro') {
-        console.warn(`[Permissions] User ${user.id} has plan '${plan}' but no active subscription record was found. Granting access as a safeguard.`);
-        return { allowed: true, generationCount };
-    }
-
-    const limit = plan === 'hobbyist' ? HOBBYIST_GENERATION_LIMIT : FREE_GENERATION_LIMIT;
-
-    if (generationCount >= limit) {
-        return { allowed: false, error: 'GENERATION_LIMIT_EXCEEDED', generationCount };
+    // Handle the case of a new free user who doesn't have a balance yet.
+    const generationBalance = freshUser.user_metadata?.generation_balance ?? (plan === 'free' ? FREE_GENERATION_LIMIT : 0);
+    
+    if (generationBalance <= 0) {
+        return { allowed: false, error: 'GENERATION_LIMIT_EXCEEDED', generationBalance };
     }
     
-    return { allowed: true, generationCount };
+    return { allowed: true, generationBalance };
 };
 
 
 /**
- * Increments the generation count for a non-premium user.
+ * Decrements the generation balance for a non-premium user.
  * @param user The authenticated Supabase User object.
- * @returns The new generation count, or null if the user is premium.
+ * @returns The new generation balance.
  */
-export const incrementGenerationCount = async (user: User): Promise<number | null> => {
-    // Re-check for an active subscription before incrementing.
+export const consumeGenerationCredit = async (user: User): Promise<number | null> => {
+    // Re-check for an active subscription before decrementing.
     const { data: activeSubscription } = await supabaseAdmin
         .from('subscriptions')
-        .select('id')
+        .select('id, plan_name')
         .eq('user_id', user.id)
         .eq('status', 'active')
         .maybeSingle();
         
-    if (activeSubscription) {
-        return null; // Premium users don't have their count incremented.
+    if (activeSubscription && activeSubscription.plan_name === 'pro') {
+        return null; // Pro users don't consume credits.
     }
     
     // Re-fetch the user directly from the database to ensure we have the latest metadata.
     const { data: { user: freshUser }, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(user.id);
 
     if (fetchError || !freshUser) {
-        console.error(`[Backend] Failed to re-fetch user ${user.id} before incrementing count:`, fetchError);
-        throw new Error('Could not verify user generation status before incrementing.');
+        console.error(`[Backend] Failed to re-fetch user ${user.id} before consuming credit:`, fetchError);
+        throw new Error('Could not verify user generation status before consuming credit.');
     }
     
-    const generationCount = freshUser.user_metadata?.generation_count || 0;
-    const newCount = generationCount + 1;
+    const plan = freshUser.user_metadata?.plan || 'free';
+    const currentBalance = freshUser.user_metadata?.generation_balance ?? (plan === 'free' ? FREE_GENERATION_LIMIT : 0);
+    const newBalance = Math.max(0, currentBalance - 1);
     
     const { error } = await supabaseAdmin.auth.admin.updateUserById(freshUser.id, {
-        user_metadata: { ...freshUser.user_metadata, generation_count: newCount }
+        user_metadata: { ...freshUser.user_metadata, generation_balance: newBalance }
     });
 
     if (error) {
-        console.error(`[Backend] Failed to update generation count for user ${freshUser.id}:`, error);
-        throw new Error('Failed to update user generation count.');
+        console.error(`[Backend] Failed to update generation balance for user ${freshUser.id}:`, error);
+        throw new Error('Failed to update user generation balance.');
     }
 
-    console.log(`[Backend] User ${freshUser.id} generation count updated to ${newCount}.`);
-    return newCount;
+    console.log(`[Backend] User ${freshUser.id} generation balance updated to ${newBalance}.`);
+    return newBalance;
 };

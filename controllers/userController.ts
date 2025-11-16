@@ -1,6 +1,7 @@
 import * as express from 'express';
 import { supabaseAdmin } from '../supabaseClient';
 import { authenticateUser } from '../userUtils';
+import { getDodoClient } from '../dodo-payments';
 import crypto from 'crypto';
 
 // --- HELPER FUNCTIONS ---
@@ -75,7 +76,7 @@ export const handleRevokeApiKey = async (req: express.Request, res: express.Resp
 };
 
 
-// --- USER PLAN MANAGEMENT ---
+// --- USER PLAN & BILLING MANAGEMENT ---
 
 export const handleGetActivePlans = async (req: express.Request, res: express.Response) => {
     const user = await authenticateUser(req);
@@ -138,5 +139,52 @@ export const handleSwitchPlan = async (req: express.Request, res: express.Respon
 
     } catch(e) {
         handleError(res, e, 'Failed to switch plan.');
+    }
+};
+
+export const handleCancelSubscription = async (req: express.Request, res: express.Response) => {
+    const user = await authenticateUser(req);
+    if (!user) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    
+    const { subscriptionId } = req.body;
+    if (!subscriptionId) {
+        return res.status(400).json({ error: 'Subscription ID is required.' });
+    }
+
+    try {
+        const { data: subscription, error: subError } = await supabaseAdmin
+            .from('subscriptions')
+            .select('dodo_subscription_id, status')
+            .eq('id', subscriptionId)
+            .eq('user_id', user.id)
+            .single();
+
+        if (subError || !subscription) {
+            return res.status(404).json({ error: 'Subscription not found or you do not have permission to modify it.' });
+        }
+
+        if (subscription.status !== 'active') {
+             return res.status(400).json({ error: `Cannot cancel a subscription with status: ${subscription.status}.` });
+        }
+        
+        if (!subscription.dodo_subscription_id) {
+            // This could be a one-time payment plan that isn't cancellable.
+            return res.status(400).json({ error: 'This plan is not a recurring subscription and cannot be cancelled.' });
+        }
+        
+        const dodo = await getDodoClient();
+        
+        // Correct Method: Update the subscription to cancel at the end of the period.
+        await dodo.subscriptions.update(subscription.dodo_subscription_id, {
+            cancel_at_next_billing_date: true,
+        });
+
+        // The webhook (`subscription.cancelled`) will handle updating the final status in our DB.
+        res.status(200).json({ message: 'Your subscription has been scheduled to cancel at the end of the current billing period.' });
+
+    } catch(e) {
+        handleError(res, e, 'Failed to cancel subscription.');
     }
 };

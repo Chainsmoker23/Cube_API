@@ -36,12 +36,12 @@ export const getApiKeyForRequest = async (user: User, userProvidedKey?: string, 
 
     // Priority 3: Free/Hobbyist users on the shared key, subject to a pre-check.
     if (options.checkLimits) {
-        const { allowed, error: limitError, generationCount } = await canUserGenerate(user);
+        const { allowed, error: limitError, generationBalance } = await canUserGenerate(user);
         if (!allowed) {
-            // Throw a custom error object that includes the current generation count.
+            // Throw a custom error object that includes the current generation balance.
             // This allows the controller to send this data back to the frontend for UI synchronization.
             const error = new Error(limitError);
-            (error as any).generationCount = generationCount;
+            (error as any).generationBalance = generationBalance;
             throw error;
         }
     }

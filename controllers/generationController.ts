@@ -1,11 +1,11 @@
 import * as express from 'express';
 import { GoogleGenAI, Type } from "@google/genai";
-import { authenticateUser, incrementGenerationCount } from '../userUtils';
+import { authenticateUser, consumeGenerationCredit } from '../userUtils';
 import { getApiKeyForRequest } from '../services/apiKeyService';
 
 // --- SCHEMAS & PROMPTS ---
 
-const responseSchema = {
+export const responseSchema = {
   type: Type.OBJECT,
   properties: {
     title: { type: Type.STRING, description: "A concise title for the architecture diagram." },
@@ -104,7 +104,7 @@ const neuralNetworkSchema = {
   required: ["title", "nodes", "links"],
 };
 
-const systemPrompt = `You are an expert system architect. Your task is to generate a JSON representation of a software architecture diagram based on a user's prompt. The JSON must strictly adhere to the provided schema.
+export const systemPrompt = `You are an expert system architect. Your task is to generate a JSON representation of a software architecture diagram based on a user's prompt. The JSON must strictly adhere to the provided schema.
 
 **Layout Philosophy: The "Swimlane" Principle**
 For any diagram with logical tiers (e.g., Presentation, Application, Data), you MUST adopt a strict, columnar (swimlane) layout. This is your highest priority for achieving a professional look.
@@ -213,13 +213,13 @@ export const handleGenerateDiagram = async (req: express.Request, res: express.R
         };
         const data = await getGeminiResponse(apiKey, fullPrompt, responseSchema);
 
-        const newGenerationCount = await incrementGenerationCount(user);
+        const newGenerationBalance = await consumeGenerationCredit(user);
         
-        res.json({ diagram: data, newGenerationCount });
+        res.json({ diagram: data, newGenerationBalance });
     } catch (e: any) {
         // Handle the specific "limit exceeded" error to pass back the final count.
         if (e.message?.includes('GENERATION_LIMIT_EXCEEDED')) {
-            return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationCount: e.generationCount });
+            return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationBalance: e.generationBalance });
         }
         handleError(res, e);
     }
@@ -244,13 +244,13 @@ export const handleGenerateNeuralNetwork = async (req: express.Request, res: exp
         };
         const data = await getGeminiResponse(apiKey, fullPrompt, neuralNetworkSchema);
         
-        const newGenerationCount = await incrementGenerationCount(user);
+        const newGenerationBalance = await consumeGenerationCredit(user);
         
-        res.json({ diagram: data, newGenerationCount });
+        res.json({ diagram: data, newGenerationBalance });
     } catch (e: any) {
         // Handle the specific "limit exceeded" error to pass back the final count.
         if (e.message?.includes('GENERATION_LIMIT_EXCEEDED')) {
-            return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationCount: e.generationCount });
+            return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationBalance: e.generationBalance });
         }
         handleError(res, e);
     }

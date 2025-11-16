@@ -10,6 +10,8 @@ interface AppConfig {
     dodo_secret_key: string | null;
     dodo_webhook_secret: string | null;
     site_url: string | null;
+    dodo_hobbyist_product_id: string | null;
+    dodo_pro_product_id: string | null;
 }
 
 // In-memory cache for the config object to reduce DB lookups.
@@ -46,34 +48,53 @@ const fetchConfigFromDatabase = async (): Promise<Partial<AppConfig>> => {
 
 /**
  * Gets the cached config, refreshing from the database if stale, and merges with env fallbacks.
+ * Crucially, it overrides Dodo credentials with test variables if DODO_MODE is 'test'.
  * @returns The full application configuration.
  */
 export const getCachedConfig = async (): Promise<AppConfig> => {
     const now = Date.now();
+    const isTestMode = process.env.DODO_MODE === 'test';
+
+    // If in test mode, we completely ignore database values for Dodo keys and ONLY use test .env variables.
+    // This is the primary fix for the 401 error by preventing cached live keys from being used.
+    if (isTestMode) {
+        // Even if we have a cache, we must ensure it's using the test values.
+        // It's safer to rebuild it if it's stale or apply overrides.
+        if (!cachedConfig || (now - cacheLastUpdated > CACHE_TTL)) {
+            console.log('[Config Cache] Dodo Test Mode ACTIVE. Refreshing cache and applying TEST overrides.');
+            const dbConfig = await fetchConfigFromDatabase();
+            cachedConfig = {
+                gemini_api_key: dbConfig.gemini_api_key || process.env.VITE_API_KEY || null,
+                site_url: dbConfig.site_url || process.env.SITE_URL || null,
+                // --- DODO TEST OVERRIDES ---
+                dodo_secret_key: process.env.DODO_SECRET_KEY_TEST || null,
+                dodo_webhook_secret: process.env.DODO_WEBHOOK_SECRET_TEST || null,
+                dodo_hobbyist_product_id: process.env.VITE_DODO_HOBBYIST_PRODUCT_ID_TEST || null,
+                dodo_pro_product_id: process.env.VITE_DODO_PRO_PRODUCT_ID_TEST || null,
+            };
+            cacheLastUpdated = now;
+        } else {
+            // Apply overrides to the existing cache to ensure it's in a test state.
+            cachedConfig.dodo_secret_key = process.env.DODO_SECRET_KEY_TEST || null;
+            cachedConfig.dodo_webhook_secret = process.env.DODO_WEBHOOK_SECRET_TEST || null;
+            cachedConfig.dodo_hobbyist_product_id = process.env.VITE_DODO_HOBBYIST_PRODUCT_ID_TEST || null;
+            cachedConfig.dodo_pro_product_id = process.env.VITE_DODO_PRO_PRODUCT_ID_TEST || null;
+        }
+        return cachedConfig;
+    }
+
+    // --- Original Live Mode Logic ---
     if (!cachedConfig || (now - cacheLastUpdated > CACHE_TTL)) {
-        console.log('[Config Cache] Cache stale or empty, refreshing from database...');
+        console.log('[Config Cache] Cache stale or empty, refreshing from database for LIVE mode...');
         const dbConfig = await fetchConfigFromDatabase();
         
-        // Helper to log the source of the configuration
-        const logSource = (key: string, dbValue: any, envValue: any) => {
-            if (dbValue) {
-                console.log(`[Config Cache] '${key}' loaded from database.`);
-            } else if (envValue) {
-                console.log(`[Config Cache] '${key}' loaded from .env fallback.`);
-            } else {
-                console.warn(`[Config Cache] WARN: '${key}' is not set in the database or .env file.`);
-            }
-        };
-
-        logSource('dodo_secret_key', dbConfig.dodo_secret_key, process.env.DODO_SECRET_KEY);
-        logSource('dodo_webhook_secret', dbConfig.dodo_webhook_secret, process.env.DODO_WEBHOOK_SECRET);
-
-        // Merge with environment variable fallbacks
         cachedConfig = {
             gemini_api_key: dbConfig.gemini_api_key || process.env.VITE_API_KEY || null,
             dodo_secret_key: dbConfig.dodo_secret_key || process.env.DODO_SECRET_KEY || null,
             dodo_webhook_secret: dbConfig.dodo_webhook_secret || process.env.DODO_WEBHOOK_SECRET || null,
             site_url: dbConfig.site_url || process.env.SITE_URL || null,
+            dodo_hobbyist_product_id: dbConfig.dodo_hobbyist_product_id || process.env.VITE_DODO_HOBBYIST_PRODUCT_ID || null,
+            dodo_pro_product_id: dbConfig.dodo_pro_product_id || process.env.VITE_DODO_PRO_PRODUCT_ID || null,
         };
         cacheLastUpdated = now;
     }
@@ -185,7 +206,7 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
 
         // 2. Filter users by email if a search term is provided
         const filteredUsers = email
-            ? users.filter(u => u.email?.toLowerCase().includes((email as string).toLowerCase()))
+            ? users.filter((u: User) => u.email?.toLowerCase().includes((email as string).toLowerCase()))
             : users;
 
         // 3. Get all subscriptions from our public table
@@ -203,20 +224,26 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
             return acc;
         }, {} as Record<string, any[]>);
 
-        // 5. Combine the data into a single response payload
+        // 5. Combine the data into a single response payload with improved logic
         const responsePayload = filteredUsers.map(user => {
             const userSubscriptions = subscriptionsByUserId[user.id] || [];
-            // Sort subscriptions by creation date, newest first
             userSubscriptions.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+            // Find the latest active subscription to determine the "true" current plan
+            const activeSub = userSubscriptions.find((sub: any) => sub.status === 'active');
+            
+            // The displayed plan prioritizes an active subscription, then falls back to metadata.
+            const displayPlan = activeSub?.plan_name || user.user_metadata?.plan || 'free';
+            
+            // The status should reflect the most recent activity, even if it's not active (e.g., 'pending').
+            const displayStatus = userSubscriptions[0]?.status || 'n/a';
 
             return {
                 id: user.id,
                 email: user.email,
-                // Use the latest subscription to determine the current plan and status for at-a-glance view
-                currentPlan: userSubscriptions[0]?.plan_name || user.user_metadata?.plan || 'free',
-                currentStatus: userSubscriptions[0]?.status || 'n/a',
+                currentPlan: displayPlan,
+                currentStatus: displayStatus,
                 createdAt: user.created_at,
-                // Include the full history for the detailed view
                 subscriptions: userSubscriptions,
             };
         });
@@ -229,5 +256,63 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
     } catch (error: any) {
         console.error('Error fetching admin user data:', error);
         res.status(500).json({ error: 'Failed to retrieve user data.' });
+    }
+};
+
+export const handleAdminUpdateUserPlan = async (req: express.Request, res: express.Response) => {
+    const { userId } = req.params;
+    const { newPlan } = req.body;
+
+    if (!userId || !newPlan) {
+        return res.status(400).json({ error: 'User ID and new plan are required.' });
+    }
+
+    if (!['free', 'hobbyist', 'pro'].includes(newPlan)) {
+        return res.status(400).json({ error: 'Invalid plan specified.' });
+    }
+
+    try {
+        const { data: { user }, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (getUserError || !user) throw getUserError || new Error('User not found.');
+
+        const newMetadata: any = { ...user.user_metadata, plan: newPlan };
+        if (newPlan === 'hobbyist' || newPlan === 'free') {
+            newMetadata.generation_count = 0;
+        }
+        
+        // Step 1: Update user metadata to grant immediate permissions
+        const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(userId, { user_metadata: newMetadata });
+        if (updateUserError) throw updateUserError;
+
+        // Step 2: Synchronize the subscriptions table to reflect the override for consistency
+        if (newPlan === 'pro' || newPlan === 'hobbyist') {
+            const { data: pendingSub } = await supabaseAdmin
+                .from('subscriptions')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('plan_name', newPlan)
+                .eq('status', 'pending')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            if (pendingSub) {
+                await supabaseAdmin.from('subscriptions').update({ status: 'active', dodo_subscription_id: `admin_override_${new Date().toISOString()}` }).eq('id', pendingSub.id);
+                console.log(`[Admin] Activated pending sub ${pendingSub.id} for user ${userId}.`);
+            } else {
+                await supabaseAdmin.from('subscriptions').insert({ user_id: userId, plan_name: newPlan, status: 'active', dodo_subscription_id: `admin_override_${new Date().toISOString()}` });
+                console.log(`[Admin] Created override subscription for user ${userId} with plan '${newPlan}'.`);
+            }
+        } else if (newPlan === 'free') {
+            await supabaseAdmin.from('subscriptions').update({ status: 'cancelled' }).eq('user_id', userId).eq('status', 'active');
+            console.log(`[Admin] Cancelled all active subscriptions for user ${userId}.`);
+        }
+
+        console.log(`[Admin] User ${userId} plan manually updated to '${newPlan}'.`);
+        res.status(200).json({ message: `User plan successfully updated to ${newPlan}.` });
+
+    } catch (error: any) {
+        console.error(`[Admin] Error updating user plan for ${userId}:`, error);
+        res.status(500).json({ error: `Failed to update user plan: ${error.message}` });
     }
 };
