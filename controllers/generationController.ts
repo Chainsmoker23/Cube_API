@@ -133,7 +133,7 @@ For any diagram with logical tiers (e.g., Presentation, Application, Data), you 
 const getGeminiResponse = async (apiKey: string, promptPayload: any, schema?: any) => {
     try {
         const ai = new GoogleGenAI({ apiKey });
-        const model = 'gemini-2.5-flash';
+        const model = 'gemini-2.0-ultra';
 
         const contents = promptPayload.contents || promptPayload;
         const systemInstruction = promptPayload.systemInstruction;
