@@ -7,6 +7,7 @@ const CONFIG_TABLE = '_app_config';
 
 interface AppConfig {
     gemini_api_key: string | null;
+    ai_provider_config: string | null;
     dodo_secret_key: string | null;
     dodo_webhook_secret: string | null;
     site_url: string | null;
@@ -64,6 +65,7 @@ export const getCachedConfig = async (): Promise<AppConfig> => {
             console.log('[Config Cache] Dodo Test Mode ACTIVE. Refreshing cache and applying TEST overrides.');
             const dbConfig = await fetchConfigFromDatabase();
             cachedConfig = {
+                ai_provider_config: dbConfig.ai_provider_config || '{}',
                 gemini_api_key: dbConfig.gemini_api_key || process.env.VITE_API_KEY || null,
                 site_url: dbConfig.site_url || process.env.SITE_URL || null,
                 // --- DODO TEST OVERRIDES ---
@@ -89,6 +91,7 @@ export const getCachedConfig = async (): Promise<AppConfig> => {
         const dbConfig = await fetchConfigFromDatabase();
         
         cachedConfig = {
+            ai_provider_config: dbConfig.ai_provider_config || '{}',
             gemini_api_key: dbConfig.gemini_api_key || process.env.VITE_API_KEY || null,
             dodo_secret_key: dbConfig.dodo_secret_key || process.env.DODO_SECRET_KEY || null,
             dodo_webhook_secret: dbConfig.dodo_webhook_secret || process.env.DODO_WEBHOOK_SECRET || null,

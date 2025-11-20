@@ -1,7 +1,7 @@
 import * as express from 'express';
-import { GoogleGenAI, Type } from "@google/genai";
-import { authenticateUser, consumeGenerationCredit } from '../userUtils';
-import { getApiKeyForRequest } from '../services/apiKeyService';
+import { Type } from "@google/genai";
+import { authenticateUser, consumeGenerationCredit, canUserGenerate } from '../userUtils';
+import * as aiService from '../services/aiService';
 
 // --- SCHEMAS & PROMPTS ---
 
@@ -128,150 +128,97 @@ For any diagram with logical tiers (e.g., Presentation, Application, Data), you 
 `;
 
 
-// --- HELPER FUNCTIONS ---
-
-const getGeminiResponse = async (apiKey: string, promptPayload: any, schema?: any) => {
-    try {
-        const ai = new GoogleGenAI({ apiKey });
-        const model = 'gemini-2.5-flash';
-
-        const contents = promptPayload.contents || promptPayload;
-        const systemInstruction = promptPayload.systemInstruction;
-        
-        const config: any = schema ? {
-            responseMimeType: "application/json",
-            responseSchema: schema,
-        } : {};
-
-        if (systemInstruction) {
-            config.systemInstruction = systemInstruction;
-        }
-
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: contents,
-            config: Object.keys(config).length > 0 ? config : undefined
-        });
-
-        const text = response.text;
-        
-        if (schema) {
-             if (!text) {
-                throw new Error("Gemini API returned an empty response, but a JSON object was expected.");
-            }
-            const cleanedJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            return JSON.parse(cleanedJson);
-        }
-        return text || "";
-    } catch (e: any) {
-        console.error("Gemini API Error:", e.message, e.stack);
-        if (e.message.includes('API key not valid')) {
-            throw new Error("The provided API key is invalid. Please check your key and try again.");
-        }
-        if (e.message.includes('quota')) {
-            throw new Error("The API key has exceeded its quota. Please check your billing or try another key.");
-        }
-        throw new Error(`Gemini API Error: ${e.message}`);
-    }
-};
-
-const handleError = (res: express.Response, error: unknown, defaultMessage: string = 'An unexpected error occurred.') => {
-    const errorMessage = error instanceof Error ? error.message : defaultMessage;
-    console.error(`[Backend Error] ${errorMessage}`);
-    if (errorMessage.includes("API key")) {
-        return res.status(400).json({ error: errorMessage });
-    }
-    if (errorMessage.includes("quota")) {
-        return res.status(429).json({ error: 'SHARED_KEY_QUOTA_EXCEEDED' });
-    }
-    // This is now handled by the controllers directly to include the generation count.
-    // if (errorMessage.includes("GENERATION_LIMIT_EXCEEDED")) {
-    //     return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED' });
-    // }
-    return res.status(500).json({ error: errorMessage });
-};
-
-
 // --- CONTROLLER FUNCTIONS ---
 
 export const handleGenerateDiagram = async (req: express.Request, res: express.Response) => {
-    const user = await authenticateUser(req);
-    if (!user) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid authentication token.' });
-    }
-
     try {
-        const { prompt, userApiKey: userProvidedKey } = req.body;
+        const user = await authenticateUser(req);
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized: Invalid authentication token.' });
+        }
+
+        const { prompt, userApiKey } = req.body;
         
-        const apiKey = await getApiKeyForRequest(user, userProvidedKey, { checkLimits: true });
+        // Check user's generation limit *before* making the API call
+        if (!userApiKey) {
+            const { allowed, error: limitError, generationBalance } = await canUserGenerate(user);
+            if (!allowed) {
+                const error = new Error(limitError);
+                (error as any).generationBalance = generationBalance;
+                throw error;
+            }
+        }
+        
+        const data = await aiService.generateJsonFromPrompt(
+            systemPrompt, 
+            `Generate the JSON for the following prompt: "${prompt}"`,
+            responseSchema, 
+            userApiKey
+        );
 
-        const fullPrompt = {
-            parts: [
-                { text: systemPrompt },
-                { text: `Generate the JSON for the following prompt: "${prompt}"` }
-            ]
-        };
-        const data = await getGeminiResponse(apiKey, fullPrompt, responseSchema);
-
-        const newGenerationBalance = await consumeGenerationCredit(user);
+        // Only consume a credit if a personal key was NOT used.
+        const newGenerationBalance = userApiKey ? null : await consumeGenerationCredit(user);
         
         res.json({ diagram: data, newGenerationBalance });
     } catch (e: any) {
-        // Handle the specific "limit exceeded" error to pass back the final count.
         if (e.message?.includes('GENERATION_LIMIT_EXCEEDED')) {
             return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationBalance: e.generationBalance });
         }
-        handleError(res, e);
+        console.error(`[Backend Error] ${e.message}`);
+        res.status(500).json({ error: e.message || 'An unexpected error occurred.' });
     }
 };
 
 export const handleGenerateNeuralNetwork = async (req: express.Request, res: express.Response) => {
-    const user = await authenticateUser(req);
-    if (!user) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid authentication token.' });
-    }
-
     try {
-        const { prompt, userApiKey: userProvidedKey } = req.body;
-        
-        const apiKey = await getApiKeyForRequest(user, userProvidedKey, { checkLimits: true });
+        const user = await authenticateUser(req);
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized: Invalid authentication token.' });
+        }
+        const { prompt, userApiKey } = req.body;
 
-        const fullPrompt = {
-            parts: [
-                { text: systemPrompt },
-                { text: `Generate the JSON for the following neural network prompt: "${prompt}"` }
-            ]
-        };
-        const data = await getGeminiResponse(apiKey, fullPrompt, neuralNetworkSchema);
+        if (!userApiKey) {
+            const { allowed, error: limitError, generationBalance } = await canUserGenerate(user);
+            if (!allowed) {
+                const error = new Error(limitError);
+                (error as any).generationBalance = generationBalance;
+                throw error;
+            }
+        }
         
-        const newGenerationBalance = await consumeGenerationCredit(user);
+        const data = await aiService.generateJsonFromPrompt(
+            systemPrompt, // Still use the base system prompt for context
+            `Generate the JSON for the following neural network prompt: "${prompt}"`,
+            neuralNetworkSchema,
+            userApiKey
+        );
+        
+        const newGenerationBalance = userApiKey ? null : await consumeGenerationCredit(user);
         
         res.json({ diagram: data, newGenerationBalance });
     } catch (e: any) {
-        // Handle the specific "limit exceeded" error to pass back the final count.
-        if (e.message?.includes('GENERATION_LIMIT_EXCEEDED')) {
+         if (e.message?.includes('GENERATION_LIMIT_EXCEEDED')) {
             return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED', generationBalance: e.generationBalance });
         }
-        handleError(res, e);
+        console.error(`[Backend Error] ${e.message}`);
+        res.status(500).json({ error: e.message || 'An unexpected error occurred.' });
     }
 };
 
 export const handleExplainArchitecture = async (req: express.Request, res: express.Response) => {
-    const user = await authenticateUser(req);
-    if (!user) {
-        return res.status(401).json({ error: 'Unauthorized: You must be logged in to use this feature.' });
-    }
-    
     try {
-        const { diagramData, userApiKey: userProvidedKey } = req.body;
+        const user = await authenticateUser(req);
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized: You must be logged in to use this feature.' });
+        }
         
-        // Use the API key service but disable limit checking for explanations.
-        const apiKey = await getApiKeyForRequest(user, userProvidedKey, { checkLimits: false });
-
+        const { diagramData, userApiKey } = req.body;
+        
         const prompt = `Based on the following JSON data representing an architecture diagram, provide a concise, markdown-formatted explanation of what the system does, its key components, and how they interact. JSON: ${JSON.stringify(diagramData)}`;
-        const explanation = await getGeminiResponse(apiKey, prompt);
+        const explanation = await aiService.generateTextFromPrompt('', prompt, userApiKey);
         res.json({ explanation });
-    } catch (e) {
-        handleError(res, e);
+    } catch (e: any) {
+        console.error(`[Backend Error] ${e.message}`);
+        res.status(500).json({ error: e.message || 'An unexpected error occurred.' });
     }
 };

@@ -29,6 +29,15 @@ import {
     handleSwitchPlan,
     handleCancelSubscription
 } from './controllers/userController';
+import { 
+    getPublishedPosts, 
+    getPostBySlug, 
+    getAdminPosts, 
+    createPost, 
+    updatePost, 
+    deletePost, 
+    uploadImageHandler
+} from './controllers/blogController';
 import { isAdmin } from './middleware/authMiddleware';
 import { handlePublicGenerateDiagram } from './controllers/publicApiController';
 import { apiKeyAuth } from './middleware/apiKeyAuthMiddleware';
@@ -73,6 +82,9 @@ router.get('/user/active-plans', handleGetActivePlans);
 router.post('/user/switch-plan', express.json(), handleSwitchPlan);
 router.post('/user/cancel-subscription', express.json(), handleCancelSubscription);
 
+// --- BLOG ROUTES (PUBLIC) ---
+router.get('/blog/posts', getPublishedPosts);
+router.get('/blog/posts/:slug', getPostBySlug);
 
 // --- ADMIN ROUTES ---
 router.post('/admin/login', express.json(), handleAdminLogin);
@@ -81,6 +93,14 @@ router.get('/admin/config', isAdmin, getAdminConfig);
 router.post('/admin/config', express.json(), isAdmin, updateAdminConfig);
 router.get('/admin/users', isAdmin, getAdminUsers);
 router.post('/admin/users/:userId/update-plan', express.json(), isAdmin, handleAdminUpdateUserPlan);
+
+// --- ADMIN BLOG ROUTES ---
+router.get('/admin/blog/posts', isAdmin, getAdminPosts);
+router.post('/admin/blog/posts', express.json(), isAdmin, createPost);
+router.put('/admin/blog/posts/:id', express.json(), isAdmin, updatePost);
+router.delete('/admin/blog/posts/:id', isAdmin, deletePost);
+router.post('/admin/blog/upload-image', express.json({ limit: '10mb' }), isAdmin, uploadImageHandler);
+
 
 // Mount the v1 router with its specific middleware
 // It needs express.json() for body parsing and apiKeyAuth for authentication.
