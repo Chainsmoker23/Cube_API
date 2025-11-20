@@ -76,16 +76,18 @@ import cors from 'cors';
 import apiRoutes from './routes'; // Import the centralized routes
 
 const app = express();
-const port = 3001;
+const port = 3000;
 
 // --- Global Middleware ---
 
 // Configure CORS to allow requests from your local frontend development server.
 // In a production environment, you would also add your deployed frontend's URL.
 const allowedOrigins = [
-    'http://localhost:5173', // Default Vite dev server
-    'http://localhost:5174', // Alternative Vite dev server
-    'http://localhost:3000', // Common CRA dev server
+    'http://localhost:5173', 
+    'http://localhost:5174',
+    'http://localhost:3000',
+    'https://cubegenai.com',
+    'https://www.cubegenai.com'
 ];
 
 const corsOptions: cors.CorsOptions = {

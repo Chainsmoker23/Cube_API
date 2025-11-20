@@ -128,6 +128,73 @@ For any diagram with logical tiers (e.g., Presentation, Application, Data), you 
 `;
 
 
+<<<<<<< HEAD
+=======
+// --- HELPER FUNCTIONS ---
+
+const getGeminiResponse = async (apiKey: string, promptPayload: any, schema?: any) => {
+    try {
+        const ai = new GoogleGenAI({ apiKey });
+        const model = 'gemini-2.5-pro';
+
+        const contents = promptPayload.contents || promptPayload;
+        const systemInstruction = promptPayload.systemInstruction;
+        
+        const config: any = schema ? {
+            responseMimeType: "application/json",
+            responseSchema: schema,
+        } : {};
+
+        if (systemInstruction) {
+            config.systemInstruction = systemInstruction;
+        }
+
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: contents,
+            config: Object.keys(config).length > 0 ? config : undefined
+        });
+
+        const text = response.text;
+        
+        if (schema) {
+             if (!text) {
+                throw new Error("Gemini API returned an empty response, but a JSON object was expected.");
+            }
+            const cleanedJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            return JSON.parse(cleanedJson);
+        }
+        return text || "";
+    } catch (e: any) {
+        console.error("Gemini API Error:", e.message, e.stack);
+        if (e.message.includes('API key not valid')) {
+            throw new Error("The provided API key is invalid. Please check your key and try again.");
+        }
+        if (e.message.includes('quota')) {
+            throw new Error("The API key has exceeded its quota. Please check your billing or try another key.");
+        }
+        throw new Error(`Gemini API Error: ${e.message}`);
+    }
+};
+
+const handleError = (res: express.Response, error: unknown, defaultMessage: string = 'An unexpected error occurred.') => {
+    const errorMessage = error instanceof Error ? error.message : defaultMessage;
+    console.error(`[Backend Error] ${errorMessage}`);
+    if (errorMessage.includes("API key")) {
+        return res.status(400).json({ error: errorMessage });
+    }
+    if (errorMessage.includes("quota")) {
+        return res.status(429).json({ error: 'SHARED_KEY_QUOTA_EXCEEDED' });
+    }
+    // This is now handled by the controllers directly to include the generation count.
+    // if (errorMessage.includes("GENERATION_LIMIT_EXCEEDED")) {
+    //     return res.status(429).json({ error: 'GENERATION_LIMIT_EXCEEDED' });
+    // }
+    return res.status(500).json({ error: errorMessage });
+};
+
+
+>>>>>>> c91e0d4ceb67f5a9922ccfb4c431bc0153885cf3
 // --- CONTROLLER FUNCTIONS ---
 
 export const handleGenerateDiagram = async (req: express.Request, res: express.Response) => {
