@@ -128,8 +128,7 @@ For any diagram with logical tiers (e.g., Presentation, Application, Data), you 
 `;
 
 
-<<<<<<< HEAD
-=======
+
 // --- HELPER FUNCTIONS ---
 
 const getGeminiResponse = async (apiKey: string, promptPayload: any, schema?: any) => {
