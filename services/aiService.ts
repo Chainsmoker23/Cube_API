@@ -104,7 +104,7 @@ const callOpenAICompatible = async (providerConfig: ProviderDetail, systemInstru
     // Add OpenRouter specific headers only if the baseURL matches
     if (baseURL?.includes('openrouter.ai')) {
         openAiConfig.defaultHeaders = {
-            'HTTP-Referer': process.env.SITE_URL || 'https://cubegen.ai',
+            'HTTP-Referer': process.env.SITE_URL || 'https://cubegenai.com',
             'X-Title': 'CubeGen AI',
         };
     }
