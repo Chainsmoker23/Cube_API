@@ -312,10 +312,14 @@ export const handleAdminUpdateUserPlan = async (req: express.Request, res: expre
         }
 
         console.log(`[Admin] User ${userId} plan manually updated to '${newPlan}'.`);
-        res.status(200).json({ message: `User plan successfully updated to ${newPlan}.` });
+        res.status(200).json({ 
+            message: `User plan successfully updated to ${newPlan}.`,
+            requiresRefresh: true  // Signal to frontend that user session needs refresh
+        });
 
     } catch (error: any) {
         console.error(`[Admin] Error updating user plan for ${userId}:`, error);
         res.status(500).json({ error: `Failed to update user plan: ${error.message}` });
     }
 };
+
