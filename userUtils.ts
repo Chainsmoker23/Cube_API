@@ -2,8 +2,8 @@ import * as express from 'express';
 import { User } from '@supabase/supabase-js';
 import { supabaseAdmin } from './supabaseClient';
 
-export const FREE_GENERATION_LIMIT = 10;
-export const HOBBYIST_GENERATION_LIMIT = 50;
+export const FREE_GENERATION_LIMIT = 4;
+export const HOBBYIST_GENERATION_LIMIT = 20;
 
 /**
  * Authenticates a user based on the Authorization header.
