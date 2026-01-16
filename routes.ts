@@ -2,13 +2,8 @@ import * as express from 'express';
 import { 
     handleGenerateDiagram,
     handleGenerateNeuralNetwork, 
-    handleGenerateAwsArchitecture,
     handleExplainArchitecture
 } from './controllers/generationController';
-import { 
-    handleGenerateIntelligentArchitecture,
-    handleGenerateIterativeArchitecture
-} from './controllers/intelligentGenerationController';
 import { handleChatWithAssistant } from './controllers/chatController';
 import { 
     createCheckoutSession, 
@@ -76,9 +71,6 @@ router.post('/recover-by-payment-id', express.json(), handleRecoverByPaymentId);
 
 router.post('/generate-diagram', express.json(), handleGenerateDiagram);
 router.post('/generate-neural-network', express.json(), handleGenerateNeuralNetwork);
-router.post('/generate-aws-architecture', express.json(), handleGenerateAwsArchitecture);
-router.post('/generate-intelligent-architecture', express.json(), handleGenerateIntelligentArchitecture);
-router.post('/generate-iterative-architecture', express.json(), handleGenerateIterativeArchitecture);
 router.post('/explain-architecture', express.json(), handleExplainArchitecture);
 router.post('/chat', express.json(), handleChatWithAssistant);
 
