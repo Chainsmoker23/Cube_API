@@ -3,13 +3,6 @@ import * as jwt from 'jsonwebtoken';
 import { supabaseAdmin } from '../supabaseClient';
 import { User } from '@supabase/supabase-js';
 
-// Add type definitions at the top to handle the imports
-declare var process: {
-  env: {
-    [key: string]: string | undefined;
-  };
-};
-
 const CONFIG_TABLE = '_app_config';
 
 interface AppConfig {
@@ -48,10 +41,10 @@ const fetchConfigFromDatabase = async (): Promise<Partial<AppConfig>> => {
         return {};
     }
 
-    return data.reduce<Record<string, any>>((acc, { key, value }) => {
+    return data.reduce((acc, { key, value }) => {
         acc[key as keyof AppConfig] = value;
         return acc;
-    }, {});
+    }, {} as Partial<AppConfig>);
 };
 
 /**
@@ -210,33 +203,14 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
     const { email } = req.query;
 
     try {
-        // 1. Fetch ALL users from Supabase Auth with pagination
-        let allUsers: User[] = [];
-        let page = 0;
-        const perPage = 1000; // Maximum allowed per page
-        
-        while (true) {
-            const { data: { users }, error: usersError } = await supabaseAdmin.auth.admin.listUsers({
-                page: page,
-                per_page: perPage
-            });
-            
-            if (usersError) throw usersError;
-            
-            allUsers = allUsers.concat(users);
-            
-            // If we got fewer users than perPage, we've reached the end
-            if (users.length < perPage) {
-                break;
-            }
-            
-            page++;
-        }
+        // 1. Fetch all users from Supabase Auth
+        const { data: { users }, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
+        if (usersError) throw usersError;
 
         // 2. Filter users by email if a search term is provided
         const filteredUsers = email
-            ? allUsers.filter((u: User) => u.email?.toLowerCase().includes((email as string).toLowerCase()))
-            : allUsers;
+            ? users.filter((u: User) => u.email?.toLowerCase().includes((email as string).toLowerCase()))
+            : users;
 
         // 3. Get all subscriptions from our public table
         const { data: subscriptions, error: subsError } = await supabaseAdmin
@@ -245,7 +219,7 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
         if (subsError) throw subsError;
 
         // 4. Map subscriptions to users for efficient lookup
-        const subscriptionsByUserId = (subscriptions || []).reduce((acc: Record<string, any[]>, sub: any) => {
+        const subscriptionsByUserId = (subscriptions || []).reduce((acc, sub) => {
             if (!acc[sub.user_id]) {
                 acc[sub.user_id] = [];
             }
