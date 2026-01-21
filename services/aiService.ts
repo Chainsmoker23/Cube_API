@@ -22,7 +22,9 @@ export interface AiProviderConfig {
 
 // Module-level index to implement a round-robin strategy for key selection.
 // This ensures concurrent requests are distributed across the key pool.
-let currentKeyIndex = 0;
+// Initialize with a random value to prevent "thundering herd" on the first key
+// when multiple server instances start up simultaneously.
+let currentKeyIndex = Math.floor(Math.random() * 100);
 
 const callGeminiWithRetry = async (apiKeyPoolOrKey: string, model: string, requestPayload: any): Promise<string | null> => {
     const keys = (apiKeyPoolOrKey || '').split(',').map(k => k.trim()).filter(Boolean);
@@ -58,18 +60,18 @@ const callGeminiWithRetry = async (apiKeyPoolOrKey: string, model: string, reque
 
             // Check for recoverable errors. If not recoverable, break the loop.
             const isRecoverable = errorMessage.includes('API key') ||
-                                  errorMessage.includes('quota') ||
-                                  errorMessage.includes('rate limit') ||
-                                  errorMessage.includes('overloaded') ||
-                                  errorMessage.includes('UNAVAILABLE');
-            
+                errorMessage.includes('quota') ||
+                errorMessage.includes('rate limit') ||
+                errorMessage.includes('overloaded') ||
+                errorMessage.includes('UNAVAILABLE');
+
             if (!isRecoverable) {
                 console.error(`[aiService] Unrecoverable error encountered. Stopping retry loop.`);
                 break;
             }
         }
     }
-    
+
     // If the loop completes without success, format and throw the final error.
     let finalErrorMessage = `All available Gemini API keys failed.`;
     if (lastError) {
@@ -100,7 +102,7 @@ const callOpenAICompatible = async (providerConfig: ProviderDetail, systemInstru
         apiKey,
         baseURL: baseURL || undefined, // Use baseURL from config, otherwise default (OpenAI)
     };
-    
+
     // Add OpenRouter specific headers only if the baseURL matches
     if (baseURL?.includes('openrouter.ai')) {
         openAiConfig.defaultHeaders = {
@@ -135,8 +137,8 @@ const callOpenAICompatible = async (providerConfig: ProviderDetail, systemInstru
 };
 
 const executeGeneration = async (
-    systemInstruction: string, 
-    userPrompt: string, 
+    systemInstruction: string,
+    userPrompt: string,
     schema: any | null,
     history: any[],
     userProvidedKey?: string
@@ -156,7 +158,7 @@ const executeGeneration = async (
 
     // Otherwise, use the centrally configured provider.
     const config = await getCachedConfig();
-    
+
     let aiConfig: AiProviderConfig;
     try {
         // The config value is a JSON string from the database, so it must be parsed.
@@ -188,10 +190,10 @@ const executeGeneration = async (
 
         resultString = await callGeminiWithRetry(keySource, providerConfig.model, requestPayload);
     } else {
-        const openAiSystemInstruction = schema 
+        const openAiSystemInstruction = schema
             ? `${systemInstruction}\n\nYou MUST respond with a valid JSON object that strictly adheres to the provided schema. Do not include any explanatory text, markdown formatting, or any characters outside of the JSON object itself.`
             : systemInstruction;
-        
+
         resultString = await callOpenAICompatible(providerConfig, openAiSystemInstruction, userPrompt, !!schema, history.slice(0, -1));
     }
 
@@ -208,7 +210,7 @@ const executeGeneration = async (
             throw new Error("The AI model returned an invalid JSON format.");
         }
     }
-    
+
     return resultString;
 }
 
