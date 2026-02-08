@@ -408,10 +408,11 @@ export const handleSyncSubscriptions = async (req: express.Request, res: express
                 let newPeriodEndsAt = sub.period_ends_at;
 
                 // Check Dodo subscription status
-                if (dodoSub.status === 'cancelled' || dodoSub.status === 'expired') {
+                // Dodo statuses: 'active', 'pending', 'on_hold', 'failed'
+                if (dodoSub.status === 'failed' || dodoSub.status === 'on_hold') {
                     newStatus = 'cancelled';
-                } else if (dodoSub.status === 'past_due') {
-                    newStatus = 'past_due';
+                } else if (dodoSub.status === 'pending') {
+                    newStatus = 'pending';
                 } else if (dodoSub.status === 'active') {
                     newStatus = 'active';
                     // Update period_ends_at from Dodo's next_billing_date if available
