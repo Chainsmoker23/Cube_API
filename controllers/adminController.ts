@@ -380,8 +380,9 @@ export const handleSyncSubscriptions = async (req: express.Request, res: express
         }
 
         // Filter to only real Dodo subscriptions (not admin overrides)
+        // Dodo IDs can start with 'sub_' or 'pay_' - exclude admin overrides
         const realDodoSubs = activeProSubs.filter(sub =>
-            sub.dodo_subscription_id?.startsWith('sub_')
+            sub.dodo_subscription_id && !sub.dodo_subscription_id.startsWith('admin_override_')
         );
 
         if (realDodoSubs.length === 0) {
