@@ -443,19 +443,12 @@ export const handleSyncSubscriptions = async (req: express.Request, res: express
                 }
 
             } catch (dodoError: any) {
-                // If Dodo returns 404, the subscription might be cancelled/deleted
-                if (dodoError.status === 404) {
-                    console.log(`[Sync] Sub ${sub.id} not found in Dodo (404), marking as expired.`);
-                    await supabaseAdmin
-                        .from('subscriptions')
-                        .update({ status: 'expired' })
-                        .eq('id', sub.id);
-                    expired++;
-                    synced++;
-                } else {
-                    console.error(`[Sync] Dodo API error for sub ${sub.id}:`, dodoError.message);
-                    errors++;
-                }
+                // Note: 'pay_' IDs are payment IDs, not subscription IDs
+                // The Dodo subscriptions.retrieve() API requires actual subscription IDs (sub_xxx)
+                // If we get a 404, it likely means we have a payment ID instead of subscription ID
+                // Don't mark as expired - just skip and log the error
+                console.error(`[Sync] Dodo API error for sub ${sub.id} (dodo_id: ${sub.dodo_subscription_id}):`, dodoError.message || dodoError.status);
+                errors++;
             }
         }
 
