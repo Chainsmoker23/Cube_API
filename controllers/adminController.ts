@@ -5,9 +5,9 @@ import { User } from '@supabase/supabase-js';
 
 // Add type definitions at the top to handle the imports
 declare var process: {
-  env: {
-    [key: string]: string | undefined;
-  };
+    env: {
+        [key: string]: string | undefined;
+    };
 };
 
 const CONFIG_TABLE = '_app_config';
@@ -96,7 +96,7 @@ export const getCachedConfig = async (): Promise<AppConfig> => {
     if (!cachedConfig || (now - cacheLastUpdated > CACHE_TTL)) {
         console.log('[Config Cache] Cache stale or empty, refreshing from database for LIVE mode...');
         const dbConfig = await fetchConfigFromDatabase();
-        
+
         cachedConfig = {
             ai_provider_config: dbConfig.ai_provider_config || '{}',
             gemini_api_key: dbConfig.gemini_api_key || process.env.VITE_API_KEY || null,
@@ -214,22 +214,22 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
         let allUsers: User[] = [];
         let page = 0;
         const perPage = 1000; // Maximum allowed per page
-        
+
         while (true) {
             const { data: { users }, error: usersError } = await supabaseAdmin.auth.admin.listUsers({
                 page: page,
                 perPage: perPage
             });
-            
+
             if (usersError) throw usersError;
-            
+
             allUsers = allUsers.concat(users);
-            
+
             // If we got fewer users than perPage, we've reached the end
             if (users.length < perPage) {
                 break;
             }
-            
+
             page++;
         }
 
@@ -260,10 +260,10 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
 
             // Find the latest active subscription to determine the "true" current plan
             const activeSub = userSubscriptions.find((sub: any) => sub.status === 'active');
-            
+
             // The displayed plan prioritizes an active subscription, then falls back to metadata.
             const displayPlan = activeSub?.plan_name || user.user_metadata?.plan || 'free';
-            
+
             // The status should reflect the most recent activity, even if it's not active (e.g., 'pending').
             const displayStatus = userSubscriptions[0]?.status || 'n/a';
 
@@ -276,9 +276,9 @@ export const getAdminUsers = async (req: express.Request, res: express.Response)
                 subscriptions: userSubscriptions,
             };
         });
-        
+
         // Sort the final payload by user creation date
-        responsePayload.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        responsePayload.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
         res.json(responsePayload);
 
@@ -308,7 +308,7 @@ export const handleAdminUpdateUserPlan = async (req: express.Request, res: expre
         if (newPlan === 'hobbyist' || newPlan === 'free') {
             newMetadata.generation_count = 0;
         }
-        
+
         // Step 1: Update user metadata to grant immediate permissions
         const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(userId, { user_metadata: newMetadata });
         if (updateUserError) throw updateUserError;
@@ -338,7 +338,7 @@ export const handleAdminUpdateUserPlan = async (req: express.Request, res: expre
         }
 
         console.log(`[Admin] User ${userId} plan manually updated to '${newPlan}'.`);
-        res.status(200).json({ 
+        res.status(200).json({
             message: `User plan successfully updated to ${newPlan}.`,
             requiresRefresh: true  // Signal to frontend that user session needs refresh
         });
@@ -346,5 +346,126 @@ export const handleAdminUpdateUserPlan = async (req: express.Request, res: expre
     } catch (error: any) {
         console.error(`[Admin] Error updating user plan for ${userId}:`, error);
         res.status(500).json({ error: `Failed to update user plan: ${error.message}` });
+    }
+};
+
+/**
+ * Controller to sync subscription statuses from Dodo Payments.
+ * Fetches all active Pro subscriptions with dodo_subscription_id and checks their status.
+ */
+export const handleSyncSubscriptions = async (req: express.Request, res: express.Response) => {
+    try {
+        // Import Dodo client dynamically to avoid circular deps
+        const { getDodoClient } = await import('../dodo-payments');
+
+        // 1. Get all active Pro subscriptions that have a real Dodo subscription ID (starts with 'sub_')
+        const { data: activeProSubs, error: fetchError } = await supabaseAdmin
+            .from('subscriptions')
+            .select('id, user_id, dodo_subscription_id, period_ends_at, plan_name')
+            .eq('status', 'active')
+            .eq('plan_name', 'pro')
+            .not('dodo_subscription_id', 'is', null);
+
+        if (fetchError) {
+            throw fetchError;
+        }
+
+        if (!activeProSubs || activeProSubs.length === 0) {
+            return res.json({
+                message: 'No active Pro subscriptions to sync.',
+                synced: 0,
+                expired: 0,
+                errors: 0
+            });
+        }
+
+        // Filter to only real Dodo subscriptions (not admin overrides)
+        const realDodoSubs = activeProSubs.filter(sub =>
+            sub.dodo_subscription_id?.startsWith('sub_')
+        );
+
+        if (realDodoSubs.length === 0) {
+            return res.json({
+                message: 'No Dodo subscriptions found to sync (all are admin overrides).',
+                synced: 0,
+                expired: 0,
+                errors: 0
+            });
+        }
+
+        const dodo = await getDodoClient();
+        let synced = 0;
+        let expired = 0;
+        let errors = 0;
+
+        // 2. For each subscription, check status with Dodo
+        for (const sub of realDodoSubs) {
+            try {
+                const dodoSub = await dodo.subscriptions.retrieve(sub.dodo_subscription_id);
+
+                // Map Dodo status to our status
+                let newStatus = sub.dodo_subscription_id ? 'active' : 'pending';
+                let newPeriodEndsAt = sub.period_ends_at;
+
+                // Check Dodo subscription status
+                if (dodoSub.status === 'cancelled' || dodoSub.status === 'expired') {
+                    newStatus = 'cancelled';
+                } else if (dodoSub.status === 'past_due') {
+                    newStatus = 'past_due';
+                } else if (dodoSub.status === 'active') {
+                    newStatus = 'active';
+                    // Update period_ends_at from Dodo's next_billing_date if available
+                    if (dodoSub.next_billing_date) {
+                        newPeriodEndsAt = dodoSub.next_billing_date;
+                    }
+                }
+
+                // 3. Update our database
+                const { error: updateError } = await supabaseAdmin
+                    .from('subscriptions')
+                    .update({
+                        status: newStatus,
+                        period_ends_at: newPeriodEndsAt
+                    })
+                    .eq('id', sub.id);
+
+                if (updateError) {
+                    console.error(`[Sync] Failed to update sub ${sub.id}:`, updateError);
+                    errors++;
+                } else {
+                    synced++;
+                    if (newStatus === 'cancelled' || newStatus === 'expired') {
+                        expired++;
+                    }
+                    console.log(`[Sync] Updated sub ${sub.id}: status=${newStatus}, period_ends_at=${newPeriodEndsAt}`);
+                }
+
+            } catch (dodoError: any) {
+                // If Dodo returns 404, the subscription might be cancelled/deleted
+                if (dodoError.status === 404) {
+                    console.log(`[Sync] Sub ${sub.id} not found in Dodo (404), marking as expired.`);
+                    await supabaseAdmin
+                        .from('subscriptions')
+                        .update({ status: 'expired' })
+                        .eq('id', sub.id);
+                    expired++;
+                    synced++;
+                } else {
+                    console.error(`[Sync] Dodo API error for sub ${sub.id}:`, dodoError.message);
+                    errors++;
+                }
+            }
+        }
+
+        res.json({
+            message: `Sync complete. ${synced} subscriptions checked.`,
+            synced,
+            expired,
+            errors
+        });
+
+    } catch (error: any) {
+        console.error('[Admin] Error syncing subscriptions:', error);
+        res.status(500).json({ error: `Failed to sync subscriptions: ${error.message}` });
     }
 };
