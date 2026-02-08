@@ -150,6 +150,35 @@ const processWebhookEvent = async (event: any) => {
             console.log(`[Webhook] Subscription ${dodoObject.id} put on_hold, marked as past_due.`);
             break;
 
+        case 'subscription.renewed':
+            // Subscription has been renewed - extend period_ends_at and ensure status is active
+            const newPeriodEnd = new Date();
+            newPeriodEnd.setDate(newPeriodEnd.getDate() + 30); // Extend by 30 days
+
+            const { data: renewedSub, error: renewError } = await supabaseAdmin
+                .from('subscriptions')
+                .update({
+                    status: 'active',
+                    period_ends_at: newPeriodEnd.toISOString()
+                })
+                .eq('dodo_subscription_id', dodoObject.id)
+                .select('user_id, plan_name')
+                .single();
+
+            if (renewError) {
+                console.error(`[Webhook] DB Error renewing subscription ${dodoObject.id}:`, renewError);
+                return;
+            }
+
+            // Ensure user metadata reflects active plan
+            if (renewedSub) {
+                const { data: { user: renewedUser } } = await supabaseAdmin.auth.admin.getUserById(renewedSub.user_id);
+                const newMetadata = { ...renewedUser?.user_metadata, plan: renewedSub.plan_name };
+                await supabaseAdmin.auth.admin.updateUserById(renewedSub.user_id, { user_metadata: newMetadata });
+                console.log(`[Webhook] Subscription ${dodoObject.id} renewed. User ${renewedSub.user_id} extended to ${newPeriodEnd.toISOString()}.`);
+            }
+            break;
+
         default:
             console.log(`[Webhook Processor] Unhandled event type: ${event.type}`);
     }
