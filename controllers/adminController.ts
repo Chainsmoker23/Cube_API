@@ -350,21 +350,35 @@ export const handleAdminUpdateUserPlan = async (req: express.Request, res: expre
 };
 
 /**
- * Controller to sync subscription statuses from Dodo Payments.
- * Fetches all active Pro subscriptions with dodo_subscription_id and checks their status.
+ * Controller to sync subscription statuses.
+ * Uses a two-pronged approach:
+ * 1. LOCAL EXPIRY CHECK: Check period_ends_at for all active Pro subs (reliable, no API needed)
+ * 2. DODO API CHECK: For sub_xxx IDs only, fetch latest status from Dodo (optional enhancement)
  */
 export const handleSyncSubscriptions = async (req: express.Request, res: express.Response) => {
     try {
-        // Import Dodo client dynamically to avoid circular deps
+        // Import Dodo client dynamically
         const { getDodoClient } = await import('../dodo-payments');
 
-        // 1. Get all active Pro subscriptions that have a real Dodo subscription ID (starts with 'sub_')
+        // Stats
+        let checked = 0;
+        let expiredByDate = 0;
+        let syncedWithDodo = 0;
+        let dodoErrors = 0;
+
+        const now = new Date();
+
+        // ==========================================
+        // STEP 1: LOCAL EXPIRY CHECK (period_ends_at)
+        // ==========================================
+        // This is the PRIMARY and most reliable check.
+        // Get all active Pro subscriptions and check their period_ends_at
+
         const { data: activeProSubs, error: fetchError } = await supabaseAdmin
             .from('subscriptions')
             .select('id, user_id, dodo_subscription_id, period_ends_at, plan_name')
             .eq('status', 'active')
-            .eq('plan_name', 'pro')
-            .not('dodo_subscription_id', 'is', null);
+            .eq('plan_name', 'pro');
 
         if (fetchError) {
             throw fetchError;
@@ -372,91 +386,112 @@ export const handleSyncSubscriptions = async (req: express.Request, res: express
 
         if (!activeProSubs || activeProSubs.length === 0) {
             return res.json({
-                message: 'No active Pro subscriptions to sync.',
-                synced: 0,
-                expired: 0,
-                errors: 0
+                message: 'No active Pro subscriptions to check.',
+                checked: 0,
+                expiredByDate: 0,
+                syncedWithDodo: 0,
+                dodoErrors: 0
             });
         }
 
-        // Filter to only real Dodo subscriptions (not admin overrides)
-        // Dodo IDs can start with 'sub_' or 'pay_' - exclude admin overrides
-        const realDodoSubs = activeProSubs.filter(sub =>
-            sub.dodo_subscription_id && !sub.dodo_subscription_id.startsWith('admin_override_')
-        );
+        console.log(`[Sync] Found ${activeProSubs.length} active Pro subscriptions to check.`);
 
-        if (realDodoSubs.length === 0) {
-            return res.json({
-                message: 'No Dodo subscriptions found to sync (all are admin overrides).',
-                synced: 0,
-                expired: 0,
-                errors: 0
-            });
-        }
+        // Check each subscription's period_ends_at
+        for (const sub of activeProSubs) {
+            checked++;
 
-        const dodo = await getDodoClient();
-        let synced = 0;
-        let expired = 0;
-        let errors = 0;
+            // Check if subscription has expired based on period_ends_at
+            if (sub.period_ends_at) {
+                const expiryDate = new Date(sub.period_ends_at);
 
-        // 2. For each subscription, check status with Dodo
-        for (const sub of realDodoSubs) {
-            try {
-                const dodoSub = await dodo.subscriptions.retrieve(sub.dodo_subscription_id);
+                if (now > expiryDate) {
+                    // Subscription has expired based on date!
+                    console.log(`[Sync] Sub ${sub.id} expired on ${sub.period_ends_at}. Marking as expired.`);
 
-                // Map Dodo status to our status
-                let newStatus = sub.dodo_subscription_id ? 'active' : 'pending';
-                let newPeriodEndsAt = sub.period_ends_at;
+                    const { error: updateError } = await supabaseAdmin
+                        .from('subscriptions')
+                        .update({ status: 'expired' })
+                        .eq('id', sub.id);
 
-                // Check Dodo subscription status
-                // Dodo statuses: 'active', 'pending', 'on_hold', 'failed'
-                if (dodoSub.status === 'failed' || dodoSub.status === 'on_hold') {
-                    newStatus = 'cancelled';
-                } else if (dodoSub.status === 'pending') {
-                    newStatus = 'pending';
-                } else if (dodoSub.status === 'active') {
-                    newStatus = 'active';
-                    // Update period_ends_at from Dodo's next_billing_date if available
-                    if (dodoSub.next_billing_date) {
-                        newPeriodEndsAt = dodoSub.next_billing_date;
+                    if (updateError) {
+                        console.error(`[Sync] Failed to update sub ${sub.id}:`, updateError);
+                        dodoErrors++;
+                    } else {
+                        expiredByDate++;
+                        continue; // Skip Dodo API check for expired subs
                     }
                 }
+            }
 
-                // 3. Update our database
-                const { error: updateError } = await supabaseAdmin
-                    .from('subscriptions')
-                    .update({
-                        status: newStatus,
-                        period_ends_at: newPeriodEndsAt
-                    })
-                    .eq('id', sub.id);
+            // ==========================================
+            // STEP 2: DODO API CHECK (only for sub_xxx IDs)
+            // ==========================================
+            // This is a SECONDARY check for subscriptions with valid Dodo sub IDs.
+            // Skip admin_override_ and pay_ IDs - only sub_ IDs work with subscriptions.retrieve()
 
-                if (updateError) {
-                    console.error(`[Sync] Failed to update sub ${sub.id}:`, updateError);
-                    errors++;
-                } else {
-                    synced++;
-                    if (newStatus === 'cancelled' || newStatus === 'expired') {
-                        expired++;
+            if (sub.dodo_subscription_id && sub.dodo_subscription_id.startsWith('sub_')) {
+                try {
+                    const dodo = await getDodoClient();
+                    const dodoSub = await dodo.subscriptions.retrieve(sub.dodo_subscription_id);
+
+                    // Map Dodo status to our status
+                    // Dodo statuses: 'active', 'pending', 'on_hold', 'failed'
+                    let newStatus = 'active';
+                    let newPeriodEndsAt = sub.period_ends_at;
+
+                    if (dodoSub.status === 'failed' || dodoSub.status === 'on_hold') {
+                        newStatus = 'cancelled';
+                    } else if (dodoSub.status === 'pending') {
+                        newStatus = 'pending';
+                    } else if (dodoSub.status === 'active') {
+                        newStatus = 'active';
+                        // Update period_ends_at from Dodo's next_billing_date if available
+                        if (dodoSub.next_billing_date) {
+                            newPeriodEndsAt = dodoSub.next_billing_date;
+                        }
                     }
-                    console.log(`[Sync] Updated sub ${sub.id}: status=${newStatus}, period_ends_at=${newPeriodEndsAt}`);
-                }
 
-            } catch (dodoError: any) {
-                // Note: 'pay_' IDs are payment IDs, not subscription IDs
-                // The Dodo subscriptions.retrieve() API requires actual subscription IDs (sub_xxx)
-                // If we get a 404, it likely means we have a payment ID instead of subscription ID
-                // Don't mark as expired - just skip and log the error
-                console.error(`[Sync] Dodo API error for sub ${sub.id} (dodo_id: ${sub.dodo_subscription_id}):`, dodoError.message || dodoError.status);
-                errors++;
+                    // Update our database
+                    const { error: updateError } = await supabaseAdmin
+                        .from('subscriptions')
+                        .update({
+                            status: newStatus,
+                            period_ends_at: newPeriodEndsAt
+                        })
+                        .eq('id', sub.id);
+
+                    if (updateError) {
+                        console.error(`[Sync] Failed to update sub ${sub.id}:`, updateError);
+                        dodoErrors++;
+                    } else {
+                        syncedWithDodo++;
+                        console.log(`[Sync] Synced with Dodo: sub ${sub.id} -> status=${newStatus}, period_ends_at=${newPeriodEndsAt}`);
+                    }
+
+                } catch (dodoError: any) {
+                    // Dodo API error - DO NOT change the subscription status
+                    // Just log and continue
+                    console.warn(`[Sync] Dodo API warning for sub ${sub.id} (${sub.dodo_subscription_id}): ${dodoError.message || dodoError.status}`);
+                    dodoErrors++;
+                }
             }
         }
 
+        // Summary
+        const message = [
+            `Sync complete.`,
+            `${checked} subscriptions checked.`,
+            expiredByDate > 0 ? `${expiredByDate} expired by date.` : null,
+            syncedWithDodo > 0 ? `${syncedWithDodo} synced with Dodo API.` : null,
+            dodoErrors > 0 ? `${dodoErrors} Dodo API errors (skipped).` : null
+        ].filter(Boolean).join(' ');
+
         res.json({
-            message: `Sync complete. ${synced} subscriptions checked.`,
-            synced,
-            expired,
-            errors
+            message,
+            checked,
+            expiredByDate,
+            syncedWithDodo,
+            dodoErrors
         });
 
     } catch (error: any) {
