@@ -1,27 +1,29 @@
 import * as express from 'express';
-import { 
+import {
     handleGenerateDiagram,
-    handleGenerateNeuralNetwork, 
+    handleGenerateNeuralNetwork,
+    handleGenerateAwsArchitecture,
     handleExplainArchitecture
 } from './controllers/generationController';
 import { handleChatWithAssistant } from './controllers/chatController';
-import { 
-    createCheckoutSession, 
+import {
+    createCheckoutSession,
     handleDodoWebhook
 } from './controllers/paymentController';
-import { 
+import {
     handleVerifyPaymentStatus,
     handleRecoverByPaymentId
 } from './controllers/recoverController';
-import { 
-    getAdminConfig, 
-    updateAdminConfig, 
+import {
+    getAdminConfig,
+    updateAdminConfig,
     handleAdminLogin,
     handleAdminLogout,
     getAdminUsers,
-    handleAdminUpdateUserPlan
+    handleAdminUpdateUserPlan,
+    handleSyncSubscriptions
 } from './controllers/adminController';
-import { 
+import {
     handleGetApiKey,
     handleGenerateApiKey,
     handleRevokeApiKey,
@@ -29,13 +31,13 @@ import {
     handleSwitchPlan,
     handleCancelSubscription
 } from './controllers/userController';
-import { 
-    getPublishedPosts, 
-    getPostBySlug, 
-    getAdminPosts, 
-    createPost, 
-    updatePost, 
-    deletePost, 
+import {
+    getPublishedPosts,
+    getPostBySlug,
+    getAdminPosts,
+    createPost,
+    updatePost,
+    deletePost,
     uploadImageHandler
 } from './controllers/blogController';
 import { isAdmin } from './middleware/authMiddleware';
@@ -71,6 +73,7 @@ router.post('/recover-by-payment-id', express.json(), handleRecoverByPaymentId);
 
 router.post('/generate-diagram', express.json(), handleGenerateDiagram);
 router.post('/generate-neural-network', express.json(), handleGenerateNeuralNetwork);
+router.post('/generate-aws-architecture', express.json(), handleGenerateAwsArchitecture);
 router.post('/explain-architecture', express.json(), handleExplainArchitecture);
 router.post('/chat', express.json(), handleChatWithAssistant);
 
@@ -93,6 +96,7 @@ router.get('/admin/config', isAdmin, getAdminConfig);
 router.post('/admin/config', express.json(), isAdmin, updateAdminConfig);
 router.get('/admin/users', isAdmin, getAdminUsers);
 router.post('/admin/users/:userId/update-plan', express.json(), isAdmin, handleAdminUpdateUserPlan);
+router.post('/admin/sync-subscriptions', isAdmin, handleSyncSubscriptions);
 
 // --- ADMIN BLOG ROUTES ---
 router.get('/admin/blog/posts', isAdmin, getAdminPosts);
