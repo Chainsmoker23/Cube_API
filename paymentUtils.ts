@@ -8,12 +8,21 @@ import { FREE_GENERATION_LIMIT, HOBBYIST_GENERATION_LIMIT } from './userUtils';
  * @param subscription The subscription object from our database to activate.
  */
 export const activatePlanAndUpdateUser = async (userId: string, subscription: any) => {
+    // Calculate period_ends_at: 30 days from now for Pro subscriptions
+    const periodEndsAt = subscription.plan_name === 'pro'
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        : null;
+
     // 1. Update the subscription record itself.
     const { error: updateSubError } = await supabaseAdmin
         .from('subscriptions')
-        .update({ status: 'active', dodo_subscription_id: subscription.dodo_subscription_id || null })
+        .update({
+            status: 'active',
+            dodo_subscription_id: subscription.dodo_subscription_id || null,
+            period_ends_at: periodEndsAt
+        })
         .eq('id', subscription.id);
-    
+
     if (updateSubError) {
         console.error(`[DB Update] Failed to activate subscription ${subscription.id}:`, updateSubError);
         throw updateSubError;
@@ -33,7 +42,7 @@ export const activatePlanAndUpdateUser = async (userId: string, subscription: an
         console.error(`[DB Update] Error fetching user data or other subs for user ${userId}:`, userError || subsError);
         // Don't throw, proceed with what we have but log the error. The primary sub is already active.
     }
-    
+
     // 3. Determine the new primary plan based on all active subscriptions.
     const allActivePlans = [...(otherActiveSubs || []), { plan_name: subscription.plan_name }];
     let newPrimaryPlan = 'free';
@@ -45,7 +54,7 @@ export const activatePlanAndUpdateUser = async (userId: string, subscription: an
 
     // 4. Prepare new metadata based on the new logic.
     const newMetadata: any = { ...currentUserData?.user_metadata, plan: newPrimaryPlan };
-    
+
     if (subscription.plan_name === 'hobbyist') {
         const currentBalance = currentUserData?.user_metadata?.generation_balance ?? 0;
         newMetadata.generation_balance = currentBalance + HOBBYIST_GENERATION_LIMIT;
@@ -53,7 +62,7 @@ export const activatePlanAndUpdateUser = async (userId: string, subscription: an
         // For Pro, the balance is irrelevant. We can remove it for cleanliness.
         delete newMetadata.generation_balance;
     }
-    
+
     // 5. Update the user metadata.
     const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(
         userId,
@@ -64,6 +73,6 @@ export const activatePlanAndUpdateUser = async (userId: string, subscription: an
         console.error(`[DB Update] Failed to update user metadata for ${userId}:`, updateUserError);
         throw updateUserError;
     }
-    
+
     console.log(`[DB Update] Successfully updated user ${userId} metadata. New plan: ${newPrimaryPlan}.`);
 };
